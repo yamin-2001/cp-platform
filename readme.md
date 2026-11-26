@@ -133,3 +133,4 @@ cd frontend
 npm run build && npx vite preview --port 4173
 node scripts/e2e-check.mjs http://localhost:4173
 ```
+
