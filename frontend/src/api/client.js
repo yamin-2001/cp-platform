@@ -1,5 +1,20 @@
 const BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
+/**
+ * Dispatched when the API rejects the session. The app listens for this and
+ * performs a soft redirect to the login screen, preserving the React tree
+ * instead of forcing a full page reload.
+ */
+export const UNAUTHORIZED_EVENT = 'cplab:unauthorized'
+
+/**
+ * Endpoints where a 401 means "these credentials are wrong", not "your
+ * session expired". Firing the unauthorized event on a failed sign-in would
+ * redirect the user away from the login form — and back to it — with the
+ * error message swallowed.
+ */
+const AUTH_ENTRY_PATHS = new Set(['/auth/login', '/auth/register'])
+
 const request = async (method, path, body) => {
   const options = {
     method,
@@ -21,9 +36,9 @@ const request = async (method, path, body) => {
     return { success: false, message: 'Invalid response from server' }
   }
 
-  if (res.status === 401) {
-    window.location.href = '/login'
-    return
+  if (res.status === 401 && !AUTH_ENTRY_PATHS.has(path)) {
+    window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT))
+    return { success: false, message: data?.message || 'Session expired' }
   }
 
   return data

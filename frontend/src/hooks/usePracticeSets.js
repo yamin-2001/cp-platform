@@ -33,13 +33,21 @@ const usePracticeSets = () => {
     if (data.success) {
       toast.success('Practice set deleted')
       setSets(prev => prev.filter(s => s._id !== id))
-      setTotal(prev => prev - 1)
+      setTotal(prev => Math.max(0, prev - 1))
     } else {
       toast.error(data.message)
     }
   }, [])
 
-  return { sets, loading, total, totalPages, page, filter, setPage, setFilter, fetch, remove }
+  /** Move to the previous page when the current one becomes empty. */
+  const goToPrevPageIfEmpty = useCallback((remainingCount) => {
+    if (remainingCount === 0 && page > 1) setPage(p => p - 1)
+  }, [page])
+
+  return {
+    sets, loading, total, totalPages, page, filter,
+    setPage, setFilter, fetch, remove, goToPrevPageIfEmpty,
+  }
 }
 
 export default usePracticeSets

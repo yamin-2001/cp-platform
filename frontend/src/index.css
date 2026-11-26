@@ -1,2 +1,227 @@
 @import "tailwindcss";
-@plugin "daisyui";
+
+/* ------------------------------------------------------------------ */
+/*  Design tokens                                                      */
+/* ------------------------------------------------------------------ */
+@theme {
+  /* Typography — JetBrains Mono is the UI/body face (terminal feel). */
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Display face — used for headings and stat numerals. A condensed
+     geometric sans so headings read distinctly from the mono body. */
+  --font-display: "Space Grotesk", "JetBrains Mono", ui-sans-serif, system-ui, sans-serif;
+
+  /* Semantic colour aliases used by charts and bespoke UI.
+     These are theme-independent because charts read them via
+     var(--color-*); the theme-aware variants live in the theme blocks. */
+  --color-chart-easy:   #00e676;
+  --color-chart-medium: #ffb300;
+  --color-chart-hard:   #ff5252;
+  --color-chart-accent: #00e5ff;
+
+  /* Theme-aware secondary text — the replacements for the old
+     `text-base-content/30` and `/40` utilities, which failed WCAG AA
+     against base-200 in both themes.
+
+     Registering these in @theme is what makes `text-muted` / `text-subtle`
+     generate as real utilities; each daisyUI theme block below then
+     overrides the value so the same class reads correctly in both themes.
+     Both tokens clear 4.5:1 on base-100, base-200 and base-300. */
+  --color-muted:  oklch(70.00% 0.014 286.2);
+  --color-subtle: oklch(67.00% 0.016 286.2);
+}
+
+@plugin "daisyui" {
+  themes: false;
+  logs: false;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Themes                                                             */
+/*  Night = default (neon terminal). Light = high-contrast daylight.   */
+/* ------------------------------------------------------------------ */
+@plugin "daisyui/theme" {
+  name: "cplab-night";
+  default: true;
+  prefersdark: true;
+  color-scheme: dark;
+
+  --color-base-100: oklch(13.90% 0.0177 283.9);
+  --color-base-200: oklch(21.13% 0.0391 282.5);
+  --color-base-300: oklch(27.00% 0.0369 283.7);
+  --color-base-content: oklch(93.33% 0.0107 286.2);
+
+  /* Semantic muted-text tokens.
+     `base-content` at low opacity fails WCAG AA against base-200 in both
+     themes, so secondary text uses these pre-computed values instead.
+     Both pass AA (>=4.5:1) on base-100, base-200 and base-300. */
+  --color-muted: oklch(70.00% 0.014 286.2);
+  --color-subtle: oklch(67.00% 0.016 286.2);
+
+  --color-primary: oklch(84.42% 0.1457 209.3);
+  --color-primary-content: oklch(13.90% 0.0177 283.9);
+  --color-secondary: oklch(70.90% 0.1592 293.5);
+  --color-secondary-content: oklch(13.90% 0.0177 283.9);
+  --color-accent: oklch(71.94% 0.1263 213.7);
+  --color-accent-content: oklch(13.90% 0.0177 283.9);
+  --color-neutral: oklch(29.66% 0.0433 283.4);
+  --color-neutral-content: oklch(93.33% 0.0107 286.2);
+
+  --color-success: oklch(80.99% 0.2141 151.8);
+  --color-success-content: oklch(13.90% 0.0177 283.9);
+  --color-warning: oklch(81.79% 0.1705 77.9);
+  --color-warning-content: oklch(13.90% 0.0177 283.9);
+  --color-error: oklch(67.86% 0.2095 24.7);
+  --color-error-content: oklch(13.90% 0.0177 283.9);
+  --color-info: oklch(84.42% 0.1457 209.3);
+  --color-info-content: oklch(13.90% 0.0177 283.9);
+
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+  name: "cplab-light";
+  default: false;
+  color-scheme: light;
+
+  --color-base-100: oklch(99.20% 0.004 286.2);
+  --color-base-200: oklch(97.60% 0.006 286.2);
+  --color-base-300: oklch(92.50% 0.012 283.7);
+  --color-base-content: oklch(24.00% 0.028 283.7);
+
+  /* Dark-on-light equivalents of the muted-text tokens (see night theme). */
+  --color-muted: oklch(48.00% 0.020 283.7);
+  --color-subtle: oklch(51.00% 0.018 283.7);
+
+  /* Deeper cyan so white button labels clear WCAG AA (>=4.5:1) on it.
+     The night theme's brighter cyan needs dark labels; here the accent is
+     dark enough that the label colour has to invert. */
+  --color-primary: oklch(50.00% 0.140 209.3);
+  --color-primary-content: oklch(99.20% 0.004 286.2);
+  --color-secondary: oklch(50.00% 0.190 293.5);
+  --color-secondary-content: oklch(99.20% 0.004 286.2);
+  --color-accent: oklch(50.00% 0.120 213.7);
+  --color-accent-content: oklch(99.20% 0.004 286.2);
+  --color-neutral: oklch(36.00% 0.032 283.4);
+  --color-neutral-content: oklch(98.00% 0.004 286.2);
+
+  --color-success: oklch(50.00% 0.170 151.8);
+  --color-success-content: oklch(99.20% 0.004 286.2);
+  --color-warning: oklch(66.00% 0.150 77.9);
+  --color-warning-content: oklch(24.00% 0.028 283.7);
+  --color-error: oklch(50.00% 0.200 24.7);
+  --color-error-content: oklch(99.20% 0.004 286.2);
+  --color-info: oklch(50.00% 0.140 209.3);
+  --color-info-content: oklch(99.20% 0.004 286.2);
+
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Base                                                               */
+/* ------------------------------------------------------------------ */
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-mono);
+    background-color: var(--color-base-100);
+    color: var(--color-base-content);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Visible focus for keyboard users only. */
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-primary) 30%, transparent);
+    color: var(--color-base-content);
+  }
+
+  /* Scrollbars that match the theme instead of the OS default. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-base-300) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--color-base-300);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in oklab, var(--color-base-content) 25%, transparent);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Components                                                         */
+/* ------------------------------------------------------------------ */
+@layer components {
+  /* The animated code-rain columns on the auth pages. Each column is
+     translated downward and loops, with a per-column animation-delay
+     applied inline to stagger the fall.
+
+     The offsets are viewport-relative (100vh) rather than percentages of
+     the column itself: a column is several times taller than the panel,
+     so a percentage-based translate would leave the panel empty for
+     part of every cycle. */
+  @keyframes rain-col {
+    0% {
+      transform: translateY(-100vh);
+    }
+    100% {
+      transform: translateY(100vh);
+    }
+  }
+
+  .rain-col {
+    animation: rain-col 14s linear infinite;
+    will-change: transform;
+  }
+
+  /* Reduce motion for users who ask for it. */
+  @media (prefers-reduced-motion: reduce) {
+    .rain-col {
+      animation: none;
+    }
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

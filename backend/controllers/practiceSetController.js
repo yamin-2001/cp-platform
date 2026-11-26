@@ -1,12 +1,27 @@
-import mongoose from "mongoose"
-import userModel from "../models/userModel.js"
-import problemModel from "../models/problemModel.js"
-import practiceSetModel from "../models/practiceSetModel.js"
+import mongoose from 'mongoose'
+import userModel from '../models/userModel.js'
+import problemModel from '../models/problemModel.js'
+import practiceSetModel from '../models/practiceSetModel.js'
+import { asString, clampInt, clampNumber, parseTags } from '../utils/validate.js'
+import { sendError } from '../utils/httpError.js'
+
+const VALID_STATUSES = ['unsolved', 'attempted', 'solved']
+
+/**
+ * Build the list of problem ids to exclude from a query.
+ * See the note in problemController.js — `$nin` needs real ObjectIds.
+ */
+const toObjectIds = (ids = []) =>
+    ids
+        .map(id => (id instanceof mongoose.Types.ObjectId ? id : mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(String(id)) : null))
+        .filter(Boolean)
 
 export const getDashboardStats = async (req, res) => {
     try {
         const user = await userModel.findById(req.userId)
-        const sets = await practiceSetModel.find({ user: req.userId })
+        if (!user) return res.status(404).json({ success: false, message: 'User not found.' })
+
+        const sets = await practiceSetModel.find({ user: req.userId }).select('isCompleted')
         const thirtyAgo = new Date()
         thirtyAgo.setDate(thirtyAgo.getDate() - 30)
         const recentActivity = await practiceSetModel.aggregate([
@@ -16,6 +31,7 @@ export const getDashboardStats = async (req, res) => {
             { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$problems.solvedAt' } }, count: { $sum: 1 } } },
             { $sort: { _id: 1 } }
         ])
+
         return res.json({
             success: true,
             stats: {
@@ -27,31 +43,53 @@ export const getDashboardStats = async (req, res) => {
                 recentActivity
             }
         })
-    } catch (e) { return res.json({ success: false, message: e.message }) }
+    } catch (e) {
+        return sendError(res, 500, 'Could not load dashboard stats.', e)
+    }
 }
 
 export const createPracticeSet = async (req, res) => {
     try {
-        const { title, description, filters = {}, problemIds } = req.body
-        const { minRating = 800, maxRating = 3500, tags = [], count = 10, strategy = 'smart' } = filters
+        const { title, description, filters = {}, problemIds } = req.body ?? {}
+        const { minRating = 800, maxRating = 3500, tags = [], count = 10, strategy = 'smart' } = filters ?? {}
+
+        const safeTitle = asString(title)
+        if (!safeTitle) {
+            return res.status(400).json({ success: false, message: 'Please give the practice set a title.' })
+        }
+        const safeDescription = asString(description) ?? ''
+
+        const rMin = clampNumber(minRating, { min: 0, max: 4000, fallback: 800 })
+        const rMax = clampNumber(maxRating, { min: 0, max: 4000, fallback: 3500 })
+        const setCount = clampInt(count, { min: 1, max: 50, fallback: 10 })
+        const tagList = parseTags(tags)
 
         let problems
-        if (problemIds?.length) {
+        if (Array.isArray(problemIds) && problemIds.length) {
             // From suggestions — fetch by exact IDs to get proper Mongoose documents
-            problems = await problemModel.find({ _id: { $in: problemIds } }).lean()
+            const ids = toObjectIds(problemIds)
+            if (!ids.length) {
+                return res.status(400).json({ success: false, message: 'No valid problems were selected.' })
+            }
+            problems = await problemModel.find({ _id: { $in: ids } }).lean()
         } else {
             const user = await userModel.findById(req.userId).select('solvedProblems attemptedProblems')
-            const excludeIds = [...user.solvedProblems.map(String), ...user.attemptedProblems.map(String)]
+            if (!user) return res.status(404).json({ success: false, message: 'User not found.' })
+
+            // Real ObjectIds, or the exclusion silently does nothing.
+            const excludeIds = toObjectIds([...user.solvedProblems, ...user.attemptedProblems])
             const q = {
                 _id:    { $nin: excludeIds },
-                rating: { $gte: Number(minRating), $lte: Number(maxRating) }
+                rating: { $gte: rMin, $lte: rMax }
             }
-            if (tags.length) q.tags = { $in: tags }
-            problems = await problemModel.aggregate([{ $match: q }, { $sample: { size: Math.min(Number(count), 50) } }])
+            // `$all`, not `$in` — a multi-tag filter means the problem must
+            // carry every requested tag. See the note in problemController.js.
+            if (tagList.length) q.tags = { $all: tagList }
+            problems = await problemModel.aggregate([{ $match: q }, { $sample: { size: setCount } }])
         }
 
         if (!problems.length) {
-            return res.json({ success: false, message: 'No unsolved problems found. Sync your CF account first.' })
+            return res.status(404).json({ success: false, message: 'No unsolved problems found. Sync your CF account first.' })
         }
 
         // Ensure _id values are proper ObjectIds (aggregate can return plain objects)
@@ -61,11 +99,11 @@ export const createPracticeSet = async (req, res) => {
         }))
 
         const ps = new practiceSetModel({
-            title,
-            description,
+            title: safeTitle,
+            description: safeDescription,
             user:     req.userId,
             problems: problemEntries,
-            filters:  { minRating, maxRating, tags, strategy, count },
+            filters:  { minRating: rMin, maxRating: rMax, tags: tagList, strategy, count: setCount },
             progress: { solved: 0, attempted: 0, total: problems.length }
         })
         await ps.save()
@@ -73,69 +111,154 @@ export const createPracticeSet = async (req, res) => {
         await userModel.findByIdAndUpdate(req.userId, { $push: { practiceSets: ps._id } })
 
         const populated = await practiceSetModel.findById(ps._id).populate('problems.problem')
-        return res.json({ success: true, practiceSet: populated })
+        return res.status(201).json({ success: true, practiceSet: populated })
 
-    } catch (e) { return res.json({ success: false, message: e.message }) }
+    } catch (e) {
+        return sendError(res, 500, 'Could not create the practice set.', e)
+    }
 }
 
 export const getPracticeSets = async (req, res) => {
     try {
-        const { page = 1, limit = 9, isCompleted } = req.query
+        const page  = clampInt(req.query.page,  { min: 1, max: 10000, fallback: 1 })
+        const limit = clampInt(req.query.limit, { min: 1, max: 100,   fallback: 9 })
+        const { isCompleted } = req.query
+
         const query = { user: req.userId }
         if (isCompleted !== undefined) query.isCompleted = isCompleted === 'true'
-        const skip  = (Number(page) - 1) * Number(limit)
+
+        const skip  = (page - 1) * limit
         const total = await practiceSetModel.countDocuments(query)
         const sets  = await practiceSetModel.find(query)
-            .sort('-createdAt').skip(skip).limit(Number(limit))
+            .sort('-createdAt').skip(skip).limit(limit)
             .populate('problems.problem', 'name contestId index rating tags difficulty url')
-        return res.json({ success: true, count: sets.length, total, totalPages: Math.ceil(total / Number(limit)), practiceSets: sets })
-    } catch (e) { return res.json({ success: false, message: e.message }) }
+
+        return res.json({
+            success: true, count: sets.length, total,
+            totalPages: Math.ceil(total / limit),
+            currentPage: page,
+            practiceSets: sets
+        })
+    } catch (e) {
+        return sendError(res, 500, 'Could not load practice sets.', e)
+    }
 }
 
 export const getPracticeSet = async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ success: false, message: 'Practice set not found.' })
+        }
         const ps = await practiceSetModel.findOne({ _id: req.params.id, user: req.userId }).populate('problems.problem')
-        if (!ps) return res.json({ success: false, message: 'Practice set not found.' })
+        if (!ps) return res.status(404).json({ success: false, message: 'Practice set not found.' })
         return res.json({ success: true, practiceSet: ps })
-    } catch (e) { return res.json({ success: false, message: e.message }) }
+    } catch (e) {
+        return sendError(res, 500, 'Could not load the practice set.', e)
+    }
 }
 
+/**
+ * Update the status of one problem inside a practice set.
+ *
+ * The status transitions are the interesting part: the counters on the user
+ * document and the membership of `solvedProblems` / `attemptedProblems` must
+ * stay in step with the entry's status, in both directions. The previous
+ * implementation only ever incremented — resetting a problem to "unsolved"
+ * left the user still credited with the solve, still listed in
+ * `solvedProblems`, and still showing an inflated `stats.totalSolved`.
+ */
 export const updateProblemStatus = async (req, res) => {
     try {
-        const { status, notes } = req.body
+        const { status, notes } = req.body ?? {}
+
+        if (!VALID_STATUSES.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: `Status must be one of: ${VALID_STATUSES.join(', ')}.`,
+            })
+        }
+
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ success: false, message: 'Practice set not found.' })
+        }
+
         const ps = await practiceSetModel.findOne({ _id: req.params.id, user: req.userId })
-        if (!ps) return res.json({ success: false, message: 'Practice set not found.' })
+        if (!ps) return res.status(404).json({ success: false, message: 'Practice set not found.' })
 
         const entry = ps.problems.id(req.params.problemId)
-        if (!entry) return res.json({ success: false, message: 'Problem entry not found.' })
+        if (!entry) return res.status(404).json({ success: false, message: 'Problem entry not found.' })
 
-        const wasSolved = entry.status === 'solved'
+        const previousStatus = entry.status
+        const problemId = entry.problem
+
         entry.status = status
-        if (notes !== undefined) entry.notes = notes
-        if (status === 'attempted') entry.attempts += 1
-        if (status === 'solved' && !wasSolved) {
-            entry.solvedAt = new Date()
-            const problem  = await problemModel.findById(entry.problem)
+        if (notes !== undefined) entry.notes = asString(notes) ?? ''
+        if (status === 'attempted' && previousStatus !== 'attempted') entry.attempts += 1
+        if (status === 'solved') entry.solvedAt = new Date()
+        else entry.solvedAt = undefined
+
+        await ps.save()
+
+        // Apply the change to the user document only when the status actually
+        // changed, so a repeated "mark solved" does not double-count.
+        if (previousStatus !== status) {
+            const problem  = await problemModel.findById(problemId).select('difficulty').lean()
             const diffKey  = problem?.difficulty === 'easy'   ? 'easyCount'
                            : problem?.difficulty === 'medium' ? 'mediumCount'
                            : 'hardCount'
-            await userModel.findByIdAndUpdate(req.userId, {
-                $inc:      { 'stats.totalSolved': 1, [`stats.${diffKey}`]: 1 },
-                $addToSet: { solvedProblems: entry.problem }
-            })
+
+            const inc = {}
+            const addToSet = {}
+            const pull = {}
+
+            if (status === 'solved') {
+                inc['stats.totalSolved'] = 1
+                inc[`stats.${diffKey}`] = 1
+                addToSet.solvedProblems = problemId
+                pull.attemptedProblems = problemId
+            } else if (previousStatus === 'solved') {
+                // Reverting a solve must undo the credit it was given.
+                inc['stats.totalSolved'] = -1
+                inc[`stats.${diffKey}`] = -1
+                pull.solvedProblems = problemId
+            }
+
+            if (status === 'attempted') {
+                addToSet.attemptedProblems = problemId
+                pull.solvedProblems = problemId
+            } else if (previousStatus === 'attempted') {
+                pull.attemptedProblems = problemId
+            }
+
+            const update = {}
+            if (Object.keys(inc).length)    update.$inc = inc
+            if (Object.keys(addToSet).length) update.$addToSet = addToSet
+            if (Object.keys(pull).length)    update.$pull = pull
+
+            if (Object.keys(update).length) {
+                await userModel.findByIdAndUpdate(req.userId, update)
+            }
         }
-        await ps.save()
-        // Re-fetch with populated problems so frontend gets full problem data
+
+        // Re-fetch with populated problems so the frontend gets full problem data
         const populated = await practiceSetModel.findById(ps._id).populate('problems.problem')
         return res.json({ success: true, practiceSet: populated })
-    } catch (e) { return res.json({ success: false, message: e.message }) }
+
+    } catch (e) {
+        return sendError(res, 500, 'Could not update the problem status.', e)
+    }
 }
 
 export const deletePracticeSet = async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ success: false, message: 'Practice set not found.' })
+        }
         const ps = await practiceSetModel.findOneAndDelete({ _id: req.params.id, user: req.userId })
-        if (!ps) return res.json({ success: false, message: 'Practice set not found.' })
+        if (!ps) return res.status(404).json({ success: false, message: 'Practice set not found.' })
         await userModel.findByIdAndUpdate(req.userId, { $pull: { practiceSets: req.params.id } })
         return res.json({ success: true, message: 'Deleted.' })
-    } catch (e) { return res.json({ success: false, message: e.message }) }
+    } catch (e) {
+        return sendError(res, 500, 'Could not delete the practice set.', e)
+    }
 }

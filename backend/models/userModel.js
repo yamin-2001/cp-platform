@@ -1,14 +1,17 @@
 import mongoose from "mongoose"
 
 const userSchema = new mongoose.Schema({
-    name:              { type: String,  required: true },
-    email:             { type: String,  required: true, unique: true },
+    name:              { type: String,  required: true, trim: true, maxlength: 100 },
+    email:             { type: String,  required: true, unique: true, lowercase: true, trim: true, maxlength: 254 },
     password:          { type: String,  required: true },
     codeforcesHandle:  { type: String,  default: '' },
     cfRating:          { type: Number,  default: 0 },
     cfMaxRating:       { type: Number,  default: 0 },
     cfRank:            { type: String,  default: '' },
     cfAvatar:          { type: String,  default: '' },
+    // The user's own estimate of their level, used when they have not
+    // linked a Codeforces account (so no real rating is available).
+    estimatedRating:   { type: Number,  default: 0, min: 0, max: 4000 },
     solvedProblems:    [{ type: mongoose.Schema.Types.ObjectId, ref: 'problem' }],
     attemptedProblems: [{ type: mongoose.Schema.Types.ObjectId, ref: 'problem' }],
     stats: {
@@ -20,11 +23,6 @@ const userSchema = new mongoose.Schema({
         lastSynced:     { type: Date,   default: null },
     },
     practiceSets: [{ type: mongoose.Schema.Types.ObjectId, ref: 'practiceset' }],
-    isAccountVerified: { type: Boolean, default: false },
-    verifyOtp:           { type: String,  default: '' },
-    verifyOtpExpireAt:   { type: Number,  default: 0 },
-    resetOtp:            { type: String,  default: '' },
-    resetOtpExpireAt:    { type: Number,  default: 0 },
 })
 
 const userModel = mongoose.models.user || mongoose.model('user', userSchema);

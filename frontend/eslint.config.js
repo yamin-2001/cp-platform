@@ -23,7 +23,14 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // `argsIgnorePattern` is needed in addition to `varsIgnorePattern`:
+      // components destructured from a callback parameter (e.g. `({ Icon }) =>`)
+      // are reported as unused args, not unused vars.
+      'no-unused-vars': ['error', {
+        varsIgnorePattern: '^[A-Z_]',
+        argsIgnorePattern: '^[A-Z_]',
+        destructuredArrayIgnorePattern: '^_',
+      }],
     },
   },
 ])

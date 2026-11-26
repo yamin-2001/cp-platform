@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { MdOpenInNew, MdAdd, MdSync, MdLightbulb } from 'react-icons/md'
-import { useCFSync } from '../context/AppContext'
+import { MdOpenInNew, MdAdd, MdSync, MdLightbulb, MdWarning } from 'react-icons/md'
+import Page from '../components/Page'
+import { useCFSync } from '../context/appHooks'
 import useSuggestions from '../hooks/useSuggestions'
 import practiceSetService from '../services/practiceSetService'
-import { ROUTES, STRATEGY } from '../constants'
+import problemService from '../services/problemService'
+import { ROUTES, STRATEGY, DIFF_COLOR, DIFF_BADGE } from '../constants'
 
 const STRATEGIES = [
   { key: STRATEGY.SMART,   label: 'Smart',   desc: 'At your level'    },
@@ -14,23 +16,27 @@ const STRATEGIES = [
   { key: STRATEGY.RANDOM,  label: 'Random',  desc: 'Surprise me'      },
 ]
 
-const ALL_TAGS = [
-  'dp','graphs','greedy','math','binary search','implementation',
-  'data structures','strings','trees','number theory','geometry',
-  'two pointers','bitmasks','dfs and similar','sortings',
+/**
+ * The tags shown before the panel is expanded.
+ *
+ * There are 38 Codeforces tags; showing them all took five rows and pushed
+ * the actual results off the screen. These are the ones most competitors
+ * care about, and the rest are one click away.
+ */
+const POPULAR_TAGS = [
+  'dp', 'graphs', 'greedy', 'math', 'binary search', 'implementation',
+  'data structures', 'strings', 'trees', 'number theory', 'geometry',
+  'two pointers', 'bitmasks', 'dfs and similar', 'sortings',
 ]
-
-const DIFF_COLOR = { easy:'text-success', medium:'text-warning', hard:'text-error', unrated:'text-base-content/30' }
-const DIFF_BADGE = { easy:'badge-success', medium:'badge-warning', hard:'badge-error', unrated:'badge-ghost' }
 
 const Suggestions = () => {
   const navigate = useNavigate()
   const { syncing, syncCF, hasHandle } = useCFSync()
   const {
     suggestions, loading, meta,
-    strategy, setStrategy,
-    tags, setTags, toggleTag,
-    count, setCount,
+    strategy, setStrategyAndFetch,
+    tags, clearTags, toggleTag,
+    count, setCountAndFetch,
     selected, toggleSelect, selectAll, clearSelected,
     fetch,
   } = useSuggestions()
@@ -38,8 +44,27 @@ const Suggestions = () => {
   const [showModal, setShowModal] = useState(false)
   const [setTitle,  setSetTitle]  = useState('')
   const [creating,  setCreating]  = useState(false)
+  const [allTags,   setAllTags]   = useState([])
+  const [showAllTags, setShowAllTags] = useState(false)
+
+  // A selected tag must always be visible, even when it is not one of the
+  // popular ones — otherwise the user cannot see what they have filtered on.
+  const visibleTags = showAllTags
+    ? allTags
+    : [...new Set([...POPULAR_TAGS.filter(t => allTags.includes(t)), ...tags])]
 
   useEffect(() => { fetch() }, []) // eslint-disable-line
+
+  // The tag list comes from the problem bank, not from a hardcoded array.
+  // The hardcoded list had 16 of the 38 Codeforces tags, so `fft`, `flows`,
+  // `probabilities`, `2-sat` and the rest were unreachable.
+  useEffect(() => {
+    let cancelled = false
+    problemService.getTags()
+      .then(data => { if (!cancelled && data?.success) setAllTags(data.tags || []) })
+      .catch(() => { /* the tag panel simply stays empty */ })
+    return () => { cancelled = true }
+  }, [])
 
   const handleCreateSet = async () => {
     if (!setTitle.trim()) { toast.error('Enter a title'); return }
@@ -59,15 +84,15 @@ const Suggestions = () => {
   }
 
   return (
-    <div className="flex flex-col gap-5 font-mono max-w-5xl">
+    <Page>
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="font-display font-extrabold text-2xl tracking-tight flex items-center gap-2">
             <MdLightbulb className="text-primary" /> Suggestions
           </h1>
-          <p className="text-base-content/50 text-sm mt-1">
+          <p className="text-muted text-sm mt-1">
             Problems you have <span className="text-primary font-semibold">never attempted</span> on Codeforces
-            {meta && <span className="ml-2 text-base-content/30">· {meta.excluded} excluded · {meta.rMin}–{meta.rMax}</span>}
+            {meta && <span className="ml-2 text-subtle">· {meta.excluded} excluded · {meta.rMin}–{meta.rMax}</span>}
           </p>
         </div>
         <div className="flex gap-2">
@@ -78,7 +103,9 @@ const Suggestions = () => {
           {suggestions.length > 0 && (
             <button onClick={() => setShowModal(true)} className="btn btn-primary btn-sm gap-1">
               <MdAdd size={16} /> Save as Set
-              {selected.size > 0 && <span className="badge badge-xs badge-primary-content">{selected.size}</span>}
+              {selected.size > 0 && (
+                <span className="badge badge-xs badge-neutral badge-neutral-content">{selected.size}</span>
+              )}
             </button>
           )}
         </div>
@@ -86,50 +113,73 @@ const Suggestions = () => {
 
       {!hasHandle && (
         <div className="alert alert-warning text-sm">
-          ⚠️ Set your CF handle in{' '}
-          <Link to={ROUTES.PROFILE} className="underline font-semibold">Profile</Link>{' '}
-          to get personalised suggestions.
+          <MdWarning className="shrink-0" size={16} aria-hidden="true" />
+          <span>
+            Set your CF handle in{' '}
+            <Link to={ROUTES.PROFILE} className="underline font-semibold">Profile</Link>{' '}
+            to get personalised suggestions.
+          </span>
         </div>
       )}
 
       <div className="card bg-base-200 border border-base-300">
         <div className="card-body p-4 gap-4">
           <div>
-            <p className="text-xs text-base-content/40 uppercase tracking-wide mb-2">Strategy</p>
-            <div className="flex gap-2 flex-wrap">
+            <p className="text-xs text-muted uppercase tracking-wide mb-2">Strategy</p>
+            <div className="flex gap-2 flex-wrap" role="radiogroup" aria-label="Suggestion strategy">
               {STRATEGIES.map(s => (
-                <button key={s.key}
-                  onClick={() => { setStrategy(s.key); clearSelected(); fetch() }}
-                  className={`btn btn-sm gap-1 ${strategy === s.key ? 'btn-primary' : 'btn-ghost border border-base-300'}`}>
-                  {s.label}
-                  <span className={`text-[10px] ${strategy === s.key ? 'text-primary-content/70' : 'text-base-content/30'}`}>
-                    — {s.desc}
-                  </span>
-                </button>
+                /* The description sits outside the button so the control keeps
+                   a single, predictable accessible name — and so the muted
+                   description never has to be tinted against the button fill. */
+                <div key={s.key} className="flex flex-col items-start gap-0.5">
+                  <button
+                    role="radio"
+                    aria-checked={strategy === s.key}
+                    onClick={() => { setStrategyAndFetch(s.key); clearSelected() }}
+                    className={`btn btn-sm ${strategy === s.key ? 'btn-primary' : 'btn-ghost border border-base-300'}`}>
+                    {s.label}
+                  </button>
+                  <span className="text-[10px] text-muted pl-1">{s.desc}</span>
+                </div>
               ))}
             </div>
           </div>
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-xs text-base-content/40 uppercase tracking-wide">Tags</p>
-              {tags.length > 0 && (
-                <button onClick={() => { setTags([]); fetch() }} className="text-xs text-base-content/30 hover:text-error">Clear</button>
-              )}
+              <p className="text-xs text-muted uppercase tracking-wide">
+                Tags
+                {tags.length > 0 && <span className="ml-1.5 text-primary normal-case">{tags.length} selected</span>}
+              </p>
+              <div className="flex items-center gap-3">
+                {tags.length > 0 && (
+                  <button onClick={clearTags} className="text-xs text-subtle hover:text-error">Clear</button>
+                )}
+                {allTags.length > POPULAR_TAGS.length && (
+                  <button onClick={() => setShowAllTags(v => !v)} className="text-xs text-subtle hover:text-primary">
+                    {showAllTags ? 'Show fewer' : `All ${allTags.length}`}
+                  </button>
+                )}
+              </div>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {ALL_TAGS.map(t => (
+              {visibleTags.map(t => (
                 <button key={t} onClick={() => toggleTag(t)}
-                  className={`badge cursor-pointer text-xs px-2.5 py-2 ${tags.includes(t) ? 'badge-primary' : 'badge-outline text-base-content/50 hover:badge-ghost'}`}>
+                  className={`badge cursor-pointer text-xs px-2.5 py-2 ${tags.includes(t) ? 'badge-primary' : 'badge-outline text-muted hover:bg-base-300'}`}>
                   {t}
                 </button>
               ))}
+              {!allTags.length && (
+                <span className="text-xs text-subtle">
+                  No tags loaded — sync the problem bank to populate the list.
+                </span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-base-content/40 uppercase tracking-wide">Count</span>
+              <span className="text-xs text-muted uppercase tracking-wide">Count</span>
               <select className="select select-bordered select-xs w-20"
-                value={count} onChange={e => setCount(Number(e.target.value))}>
+                value={count} onChange={e => setCountAndFetch(Number(e.target.value))}>
                 {[10, 15, 20, 25, 30, 50].map(n => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
@@ -137,8 +187,12 @@ const Suggestions = () => {
               <MdSync size={14} /> Refresh
             </button>
             {meta?.userRating > 0 && (
-              <span className="text-xs text-base-content/30 ml-auto">
-                Your CF rating: <span className="text-primary">{meta.userRating}</span>
+              <span className="text-xs text-subtle ml-auto flex items-center gap-1.5">
+                {hasHandle ? 'Your CF rating' : 'Your level'}:{' '}
+                <span className="text-primary">{meta.userRating}</span>
+                {!hasHandle && (
+                  <Link to={ROUTES.PROFILE} className="underline hover:text-primary">change</Link>
+                )}
               </span>
             )}
           </div>
@@ -146,7 +200,7 @@ const Suggestions = () => {
       </div>
 
       {suggestions.length > 0 && !loading && (
-        <div className="flex items-center gap-3 text-xs text-base-content/40">
+        <div className="flex items-center gap-3 text-xs text-muted">
           <button onClick={selectAll} className="hover:text-primary">Select all</button>
           <span>·</span>
           <button onClick={clearSelected} className="hover:text-primary">Clear</button>
@@ -157,45 +211,48 @@ const Suggestions = () => {
       {loading ? (
         <div className="flex justify-center py-20"><span className="loading loading-ring loading-lg text-primary" /></div>
       ) : suggestions.length === 0 ? (
-        <div className="flex flex-col items-center gap-4 py-20 text-base-content/30">
+        <div className="flex flex-col items-center gap-4 py-20 text-subtle">
           <MdLightbulb size={40} />
           <p className="text-sm">No unseen problems found. Try a different strategy or sync your CF account.</p>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
           {suggestions.map(p => (
-            <div key={p._id}
-              className={`card bg-base-200 border transition-colors cursor-pointer ${selected.has(p._id) ? 'border-primary bg-primary/5' : 'border-base-300 hover:border-base-content/20'}`}
-              onClick={() => toggleSelect(p._id)}>
+            /* A <label> wrapping a real checkbox makes the entire card
+               selectable by keyboard and announced correctly, unlike a
+               clickable <div>. */
+            <label key={p._id}
+              className={`card bg-base-200 border transition-colors cursor-pointer has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-primary ${selected.has(p._id) ? 'border-primary bg-primary/5' : 'border-base-300 hover:border-base-content/20'}`}>
               <div className="card-body p-4 flex flex-row items-start gap-3">
                 <input type="checkbox" className="checkbox checkbox-primary checkbox-sm mt-0.5 shrink-0"
-                  checked={selected.has(p._id)} onChange={() => toggleSelect(p._id)}
-                  onClick={e => e.stopPropagation()} />
+                  checked={selected.has(p._id)}
+                  onChange={() => toggleSelect(p._id)}
+                  aria-label={`Select ${p.name}`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start gap-2 flex-wrap">
                     <a href={p.url} target="_blank" rel="noopener noreferrer"
                       className="font-medium text-sm hover:text-primary flex items-center gap-1 group"
                       onClick={e => e.stopPropagation()}>
-                      <span className="text-base-content/40 text-xs">{p.contestId}{p.index}.</span>
+                      <span className="text-muted text-xs">{p.contestId}{p.index}.</span>
                       {p.name}
                       <MdOpenInNew size={12} className="opacity-0 group-hover:opacity-60 shrink-0" />
                     </a>
                     <div className={`badge badge-xs ${DIFF_BADGE[p.difficulty]}`}>{p.difficulty}</div>
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1.5">
-                    {p.reasons?.map(r => <span key={r} className="badge badge-ghost badge-xs text-base-content/50">{r}</span>)}
+                    {p.reasons?.map(r => <span key={r} className="badge badge-outline badge-xs text-muted">{r}</span>)}
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1.5">
-                    {p.tags?.slice(0, 4).map(t => <span key={t} className="badge badge-ghost badge-xs text-[10px]">{t}</span>)}
-                    {p.tags?.length > 4 && <span className="badge badge-ghost badge-xs text-[10px]">+{p.tags.length - 4}</span>}
+                    {p.tags?.slice(0, 4).map(t => <span key={t} className="badge badge-outline badge-xs text-muted text-[10px]">{t}</span>)}
+                    {p.tags?.length > 4 && <span className="badge badge-outline badge-xs text-muted text-[10px]">+{p.tags.length - 4}</span>}
                   </div>
                 </div>
                 <div className="text-right shrink-0">
                   <div className={`font-bold text-sm ${DIFF_COLOR[p.difficulty]}`}>{p.rating || '?'}</div>
-                  <div className="text-[10px] text-base-content/30 mt-0.5">{p.solvedCount?.toLocaleString()} AC</div>
+                  <div className="text-[10px] text-muted mt-0.5">{p.solvedCount?.toLocaleString()} AC</div>
                 </div>
               </div>
-            </div>
+            </label>
           ))}
         </div>
       )}
@@ -204,7 +261,7 @@ const Suggestions = () => {
         <div className="modal modal-open">
           <div className="modal-box bg-base-200 border border-base-300">
             <h3 className="font-display font-bold text-lg mb-2">Save as Practice Set</h3>
-            <p className="text-sm text-base-content/50 mb-4">
+            <p className="text-sm text-muted mb-4">
               {selected.size > 0 ? `${selected.size} selected problems` : `All ${suggestions.length} problems`} will be added.
             </p>
             <label className="form-control mb-4">
@@ -222,7 +279,7 @@ const Suggestions = () => {
           <div className="modal-backdrop" onClick={() => setShowModal(false)} />
         </div>
       )}
-    </div>
+    </Page>
   )
 }
 

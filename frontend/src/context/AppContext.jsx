@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useReducer, useEffect, useCallback, useMemo } from 'react'
+import React, { useReducer, useEffect, useCallback, useMemo } from 'react'
 import toast from 'react-hot-toast'
 import authService from '../services/authService'
 import cfService   from '../services/cfService'
+import { AppContext } from './appContextObject'
 
 const initialState = {
   user:        null,
@@ -16,6 +17,22 @@ const SET_SYNCING      = 'SET_SYNCING'
 const SET_SYNC_STATUS  = 'SET_SYNC_STATUS'
 const LOGOUT           = 'LOGOUT'
 
+/**
+ * `/cf/status` and `/cf/sync` report the same counters under different keys
+ * (totalSolved/solved, totalAttempted/attempted). Normalise both to the
+ * `total*` shape so consumers never have to care which endpoint filled
+ * `syncStatus`.
+ */
+const normaliseSyncStatus = (data) => {
+  if (!data) return null
+  return {
+    ...data,
+    totalSolved:    data.totalSolved    ?? data.solved    ?? 0,
+    totalAttempted: data.totalAttempted ?? data.attempted ?? 0,
+    lastSynced:     data.lastSynced     ?? null,
+  }
+}
+
 const appReducer = (state, { type, payload }) => {
   switch (type) {
     case SET_USER:         return { ...state, user: payload }
@@ -27,29 +44,33 @@ const appReducer = (state, { type, payload }) => {
   }
 }
 
-const AppContext = createContext(null)
-
 export const AppProvider = ({ children }) => {
   const [state, dispatch] = useReducer(appReducer, initialState)
 
   useEffect(() => {
+    let cancelled = false
     const restoreSession = async () => {
       try {
         const data = await authService.getMe()
+        if (cancelled) return
         if (data.success) {
           dispatch({ type: SET_USER, payload: data.user })
           if (data.user?.codeforcesHandle) {
             const status = await cfService.getSyncStatus()
-            if (status.success) dispatch({ type: SET_SYNC_STATUS, payload: status })
+            if (cancelled) return
+            if (status.success) {
+              dispatch({ type: SET_SYNC_STATUS, payload: normaliseSyncStatus(status) })
+            }
           }
         }
       } catch {
-        dispatch({ type: SET_USER, payload: null })
+        if (!cancelled) dispatch({ type: SET_USER, payload: null })
       } finally {
-        dispatch({ type: SET_AUTH_LOADING, payload: false })
+        if (!cancelled) dispatch({ type: SET_AUTH_LOADING, payload: false })
       }
     }
     restoreSession()
+    return () => { cancelled = true }
   }, [])
 
   const login = useCallback(async (credentials) => {
@@ -68,15 +89,36 @@ export const AppProvider = ({ children }) => {
     return me.user
   }, [])
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async ({ silent = false } = {}) => {
     try { await authService.logout() } catch { /* proceed */ } finally {
       dispatch({ type: LOGOUT })
-      toast.success('Logged out')
+      if (!silent) toast.success('Logged out')
     }
   }, [])
 
   const updateUser = useCallback((updatedUser) => {
     dispatch({ type: SET_USER, payload: updatedUser })
+  }, [])
+
+  /**
+   * Re-read `/cf/status` into `syncStatus`.
+   *
+   * `syncStatus` was only ever populated at session-restore time (and only
+   * when the handle was already set) or by `syncCF`. So a user who saved
+   * their handle for the first time saw no "Last synced" line at all until
+   * they reloaded the page — and the Dashboard, which reads
+   * `user.stats.lastSynced`, disagreed with the Profile screen.
+   */
+  const refreshSyncStatus = useCallback(async () => {
+    try {
+      const status = await cfService.getSyncStatus()
+      if (!status?.success) return null
+      const payload = normaliseSyncStatus(status)
+      dispatch({ type: SET_SYNC_STATUS, payload })
+      return payload
+    } catch {
+      return null
+    }
   }, [])
 
   const syncCF = useCallback(async () => {
@@ -90,8 +132,16 @@ export const AppProvider = ({ children }) => {
       const data = await cfService.sync()
       if (!data.success) throw new Error(data.message)
       const me = await authService.getMe()
-      dispatch({ type: SET_USER,        payload: me.user })
-      dispatch({ type: SET_SYNC_STATUS, payload: data.stats })
+      dispatch({ type: SET_USER, payload: me.user })
+      dispatch({
+        type: SET_SYNC_STATUS,
+        // The sync response has no `lastSynced`; take it from the refreshed
+        // user record so the "last synced" timestamp stays accurate.
+        payload: normaliseSyncStatus({
+          ...data.stats,
+          lastSynced: me.user?.stats?.lastSynced ?? new Date().toISOString(),
+        }),
+      })
       toast.success(
         `Synced! ${data.stats.solved} solved · ${data.stats.autoMarked} sets updated`,
         { id: syncToast }
@@ -113,24 +163,10 @@ export const AppProvider = ({ children }) => {
     isAuthenticated: !!state.user,
     hasHandle:       !!state.user?.codeforcesHandle,
     hasSynced:       !!state.user?.stats?.lastSynced,
-    login, register, logout, updateUser, syncCF,
-  }), [state, login, register, logout, updateUser, syncCF])
+    login, register, logout, updateUser, syncCF, refreshSyncStatus,
+  }), [state, login, register, logout, updateUser, syncCF, refreshSyncStatus])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }
 
-export const useAppContext = () => {
-  const ctx = useContext(AppContext)
-  if (!ctx) throw new Error('useAppContext must be used inside <AppProvider>')
-  return ctx
-}
-
-export const useAuth = () => {
-  const { user, authLoading, isAuthenticated, login, register, logout, updateUser } = useAppContext()
-  return { user, authLoading, isAuthenticated, login, register, logout, updateUser }
-}
-
-export const useCFSync = () => {
-  const { syncing, syncStatus, hasHandle, hasSynced, syncCF } = useAppContext()
-  return { syncing, syncStatus, hasHandle, hasSynced, syncCF }
-}
+export default AppProvider
